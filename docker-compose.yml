@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   grafana:
     container_name: monitoring-grafana
@@ -86,6 +84,7 @@ services:
       - --path.procfs=/host/proc
       - --path.sysfs=/host/sys
       - --path.rootfs=/host
+      - --collector.textfile.directory=/var/lib/node_exporter/textfile_collector
       - --collector.filesystem.ignored-mount-points
       - ^/(sys|proc|dev|host|etc|rootfs/var/lib/docker/containers|rootfs/var/lib/docker/overlay2|rootfs/run/docker/netns|rootfs/var/lib/docker/aufs)($$|/)
     volumes:
@@ -93,6 +92,10 @@ services:
       - /sys:/host/sys:ro
       - /:/rootfs:ro
       - /:/host:ro,rslave
+      - /dev:/host/dev:ro
+      - ./textfile_collector:/var/lib/node_exporter/textfile_collector:ro
+    depends_on:
+      - smart-exporter
     healthcheck:
       test: ["CMD", "wget", "-O", "/dev/null", "http://localhost:9100/metrics"]
       interval: 30s
@@ -148,6 +151,39 @@ services:
         max-file: "3"
     mem_limit: 1g
     mem_reservation: 512m
+
+  smart-exporter:
+    container_name: monitoring-smart-exporter
+    image: alpine:latest
+    hostname: rpi-smart
+    restart: unless-stopped
+    networks:
+      - internal
+    volumes:
+      - /dev:/dev:ro
+      - ./textfile_collector:/textfile_collector
+    privileged: true
+    command: >
+      sh -c "
+        apk add --no-cache bash wget jq smartmontools &&
+        wget -O /usr/local/bin/smartmon.sh https://raw.githubusercontent.com/micha37-martins/S.M.A.R.T-disk-monitoring-for-Prometheus/refs/heads/master/src/smartmon.sh &&
+        chmod +x /usr/local/bin/smartmon.sh &&
+        while true; do
+          LC_NUMERIC=C /usr/local/bin/smartmon.sh > /textfile_collector/smart_metrics.prom
+          echo \"SMART metrics updated at $(date)\"
+          sleep 300
+        done
+      "
+    labels:
+      - "com.example.description=SMART Disk Monitoring"
+      - "com.example.service=monitoring"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 256m
+    mem_reservation: 128m
 
 volumes:
   grafana-data:
